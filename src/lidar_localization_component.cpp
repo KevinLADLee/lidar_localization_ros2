@@ -213,6 +213,7 @@ void PCLLocalization::initializePubSub()
     "path",
     rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable());
 
+  // Latch initial map
   initial_map_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(
     "initial_map",
     rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable());
@@ -230,7 +231,7 @@ void PCLLocalization::initializePubSub()
     std::bind(&PCLLocalization::odomReceived, this, std::placeholders::_1));
 
   cloud_sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(
-    "velodyne_points", rclcpp::SensorDataQoS(),
+    "lidar_points", rclcpp::SensorDataQoS(),
     std::bind(&PCLLocalization::cloudReceived, this, std::placeholders::_1));
 
   imu_sub_ = create_subscription<sensor_msgs::msg::Imu>(
@@ -307,6 +308,11 @@ void PCLLocalization::mapReceived(const sensor_msgs::msg::PointCloud2::SharedPtr
 {
   RCLCPP_INFO(get_logger(), "mapReceived");
   pcl::PointCloud<pcl::PointXYZI>::Ptr map_cloud_ptr(new pcl::PointCloud<pcl::PointXYZI>);
+
+    // Remove NaN points
+    std::vector<int> indices;
+    pcl::removeNaNFromPointCloud(*map_cloud_ptr, *map_cloud_ptr, indices);
+    map_cloud_ptr->is_dense = true;
 
   if (msg->header.frame_id != global_frame_id_) {
     RCLCPP_WARN(this->get_logger(), "map_frame_id does not match　global_frame_id");
@@ -425,8 +431,27 @@ void PCLLocalization::cloudReceived(const sensor_msgs::msg::PointCloud2::ConstSh
 {
   if (!map_recieved_ || !initialpose_recieved_) {return;}
   RCLCPP_INFO(get_logger(), "cloudReceived");
+  pcl::PointCloud<pcl::PointXYZI>::Ptr tmpPandarCloudIn(new pcl::PointCloud<pcl::PointXYZI>);
   pcl::PointCloud<pcl::PointXYZI>::Ptr cloud_ptr(new pcl::PointCloud<pcl::PointXYZI>);
-  pcl::fromROSMsg(*msg, *cloud_ptr);
+  pcl::fromROSMsg(*msg, *tmpPandarCloudIn);
+
+  // Remove NaN points
+  std::vector<int> indices;
+  pcl::removeNaNFromPointCloud(*tmpPandarCloudIn, *tmpPandarCloudIn, indices);
+  tmpPandarCloudIn->is_dense = true;
+  
+  cloud_ptr = tmpPandarCloudIn;
+  // cloud_ptr->points.resize(tmpPandarCloudIn->size());
+  // for (size_t i = 0; i < tmpPandarCloudIn->size(); i++) {
+  //   auto &src = tmpPandarCloudIn->points[i];
+  //   auto &dst = cloud_ptr->points[i];
+  //   dst.x = src.y * -1;
+  //   dst.y = src.x;
+  //   dst.z = src.z;
+  //   dst.intensity = src.intensity;
+  // }
+
+  RCLCPP_INFO(get_logger(), "cloud size: %ld", cloud_ptr->size());
 
   if (use_imu_) {
     double received_time = msg->header.stamp.sec +
